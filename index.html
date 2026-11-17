@@ -1,0 +1,569 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Bewegungsdiagramme</title>
+<!-- Simulation Bewegungsdiagramme (6. Klasse, Mechanik, Oktober/November, Kompetenzmodul 3:
+     Bewegungsdiagramme, gleichförmige und beschleunigte Bewegung).
+     Einen Wagen mit Finger/Maus ziehen ODER mit Reglern (x0, v0, a) fahren lassen; dabei entstehen
+     live das x-t-, v-t- und a-t-Diagramm. v und a werden numerisch aus den Orten berechnet:
+     Abtastung alle 0,02 s, dann je Messpunkt eine quadratische Ausgleichskurve (Savitzky-Golay)
+     über ein Zeitfenster, v = erste, a = zweite Ableitung. Für gleichmäßig beschleunigte Bewegung
+     ist das exakt, beim Ziehen glättet es das Zittern des Fingers.
+     Eine Datei, läuft offline, lädt nichts nach, speichert nichts.
+     Der Wagen darf die sichtbare Bahn verlassen; der Knopf auf der Bahn wählt den gezeigten Bereich.
+     Die drei Diagramme skalieren ihre Hochachse selbst, die Zeitachse bleibt 0 bis 10 s.
+     Voreinstellungen: ?modus=ziehen&x0=0&v0=0&a=0&bahn=10&glaettung=mittel (oder per window.name eingebettet).
+     Ohne Angabe startet die Simulation im Regler-Modus. -->
+<style>
+  :root {
+    --gruen: #a1c73a; --hellgruen: #c1d460; --dunkel: #32373c; --gruen-text: #4f6b12;
+    --flaeche: #f2f6e6; --grau: #6b6f73; --hellgrau: #f1f2f3;
+    --fx: #1f4e79; --fv: #c0392b; --fa: #4f6b12;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    font: 16px/1.35 "Noto Sans", "DejaVu Sans", "Liberation Sans", system-ui, sans-serif;
+    color: var(--dunkel); background: #fff; overscroll-behavior: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .app {
+    height: 100vh; height: 100dvh;
+    display: grid; gap: 6px;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto auto auto auto minmax(330px, 1fr);
+    grid-template-areas: "kopf" "knoepfe" "regler" "bahn" "anzeige" "diagramme";
+    padding: max(8px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right))
+             max(8px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
+  }
+  header { grid-area: kopf; display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+  h1 { margin: 0; font-size: 18px; line-height: 1.1; border-left: 6px solid var(--gruen); padding-left: 8px; }
+  .modus { display: flex; border: 1px solid var(--dunkel); border-radius: 8px; overflow: hidden; }
+  .modus button { border: 0; border-radius: 0; min-height: 40px; padding: 0 10px; }
+  header { min-width: 0; } .modus { flex-shrink: 0; }
+  .modus button[aria-pressed=true] { background: var(--dunkel); color: #fff; }
+  .knoepfe { grid-area: knoepfe; display: flex; gap: 6px; }
+  button {
+    font: inherit; min-height: 44px; padding: 0 10px; border: 1px solid var(--dunkel);
+    background: #fff; color: var(--dunkel); border-radius: 8px; cursor: pointer; touch-action: manipulation;
+  }
+  .knoepfe button { flex: 1; font-weight: 600; }
+  button.haupt { background: var(--gruen); border-color: var(--gruen-text); }
+  button:disabled { opacity: .35; cursor: default; }
+  button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid var(--fx); outline-offset: 1px; }
+  .regler {
+    grid-area: regler; display: grid; grid-template-columns: auto 1fr 6.2em; gap: 0 8px; align-items: center;
+    background: var(--hellgrau); border-radius: 8px; padding: 2px 10px;
+  }
+  .regler[hidden] { display: none; }
+  .regler label { white-space: nowrap; }
+  .regler output { font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
+  input[type=range] { width: 100%; height: 34px; margin: 0; accent-color: var(--gruen-text); touch-action: pan-y; }
+  input[type=range]:disabled { opacity: .4; }
+  .bahn {
+    grid-area: bahn; position: relative; height: 116px; background: var(--flaeche); border-radius: 8px;
+    touch-action: none; cursor: grab; user-select: none; -webkit-user-select: none;
+  }
+  .bahn.zieht { cursor: grabbing; }
+  .bahn .massstab {
+    position: absolute; top: 4px; right: 4px; min-height: 40px; padding: 0 10px; font-size: 14px;
+    background: rgba(255, 255, 255, .85); font-variant-numeric: tabular-nums;
+  }
+  .zeile label[hidden] { display: none; }
+  .anzeige { grid-area: anzeige; display: grid; gap: 2px; }
+  .werte {
+    display: grid; grid-template-columns: repeat(4, auto); justify-content: space-between; gap: 4px;
+    font-variant-numeric: tabular-nums; font-size: 14px; font-weight: 600; white-space: nowrap;
+  }
+  .werte span:nth-child(2) { color: var(--fx); } .werte span:nth-child(3) { color: var(--fv); }
+  .werte span:nth-child(4) { color: var(--fa); }
+  .zeile { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 14px; color: var(--grau); }
+  .zeile select { font: inherit; min-height: 34px; color: var(--dunkel); }
+  .tipp { margin: 0; }
+  .diagramme { grid-area: diagramme; display: flex; flex-direction: column; gap: 2px; min-height: 0; }
+  .dia { flex: 1; position: relative; min-height: 104px; touch-action: pan-y; cursor: crosshair; }
+  canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+
+  /* Querformat, Tablet, Desktop, Beamer: Steuerung links, Diagramme rechts */
+  @media (min-aspect-ratio: 5/4) and (min-width: 600px) {
+    .app {
+      grid-template-columns: minmax(300px, 40%) minmax(0, 1fr);
+      grid-template-rows: auto auto auto auto 1fr;
+      grid-template-areas: "kopf diagramme" "knoepfe diagramme" "regler diagramme" "bahn diagramme" "anzeige diagramme";
+      align-content: start; column-gap: 14px;
+    }
+    .anzeige { align-self: start; }
+    .diagramme { min-height: 300px; }
+    .dia { min-height: 96px; }
+  }
+  /* Handy quer: wenig Höhe */
+  @media (min-aspect-ratio: 5/4) and (min-width: 600px) and (max-height: 480px) {
+    .app { gap: 4px; }
+    h1 { font-size: 16px; }
+    .bahn { height: 100px; }
+    input[type=range] { height: 28px; }
+    .dia { min-height: 80px; }
+    .diagramme { min-height: 250px; }
+  }
+  @media (min-width: 1100px) and (min-height: 600px) {
+    body { font-size: 19px; }
+    h1 { font-size: 26px; }
+    .werte { font-size: 19px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .zeile { font-size: 16px; }
+    .bahn { height: 150px; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>Bewegungs&shy;diagramme</h1>
+    <div class="modus" role="group" aria-label="Modus">
+      <button id="m-ziehen" aria-pressed="true">Ziehen</button>
+      <button id="m-regler" aria-pressed="false">Regler</button>
+    </div>
+  </header>
+  <div class="knoepfe">
+    <button id="start" class="haupt">▶ Start</button>
+    <button id="pause" disabled>❚❚ Pause</button>
+    <button id="reset">↺ Zurück&shy;setzen</button>
+  </div>
+  <div class="regler" id="regler" hidden>
+    <label for="x0">Startort x₀</label><input id="x0" type="range" min="0" max="10" step="0.5" value="0"><output id="ox0"></output>
+    <label for="v0">Startgeschw. v₀</label><input id="v0" type="range" min="-3" max="3" step="0.1" value="0"><output id="ov0"></output>
+    <label for="a">Beschleun. a</label><input id="a" type="range" min="-1" max="1" step="0.05" value="0"><output id="oa"></output>
+  </div>
+  <div class="bahn" id="bahn" aria-label="Bahn mit Wagen, zum Ziehen"><canvas id="c-bahn"></canvas>
+    <button class="massstab" id="massstab" title="Gezeigten Bereich der Bahn wechseln">↔ 0–10 m</button></div>
+  <div class="anzeige">
+    <div class="werte" aria-live="off">
+      <span id="wt"></span><span id="wx"></span><span id="wv"></span><span id="wa"></span>
+    </div>
+    <div class="zeile">
+      <p class="tipp" id="tipp"></p>
+      <label id="glaettung-feld">Glättung <select id="glaettung">
+        <option value="wenig">wenig</option><option value="mittel" selected>mittel</option><option value="stark">stark</option>
+      </select></label>
+    </div>
+  </div>
+  <div class="diagramme" id="diagramme">
+    <div class="dia"><canvas id="c-x"></canvas></div>
+    <div class="dia"><canvas id="c-v"></canvas></div>
+    <div class="dia"><canvas id="c-a"></canvas></div>
+  </div>
+</div>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const T = 10;          // Aufnahmedauer in s
+const DT = 0.02;       // Abtastzeit in s (50 Messpunkte pro Sekunde)
+const N = Math.round(T / DT);
+const BAHNEN = [5, 10, 20, 50, 100];  // wählbarer sichtbarer Bereich der Bahn in m
+let L = 10;            // sichtbare Bahn: 0 bis L in m (der Wagen darf auch außerhalb fahren)
+// halbe Fensterbreite in Messpunkten für v bzw. a (0,02 s je Punkt).
+// Im Regler-Modus gibt es kein Zittern; ein kleines Fenster hält Sprünge von a scharf.
+const FENSTER = { wenig: [5, 10], mittel: [10, 20], stark: [18, 35], regler: [3, 5] };
+const FARBE = { x: "#1f4e79", v: "#c0392b", a: "#4f6b12" };
+
+// ---------- Zahlen mit Dezimalkomma (de-AT) ----------
+const formate = {};
+function zahl(z, n = 2) {
+  const f = formate[n] || (formate[n] = new Intl.NumberFormat("de-AT", { minimumFractionDigits: n, maximumFractionDigits: n }));
+  const s = f.format(Math.abs(z) < 0.5 * 10 ** -n ? 0 : z);
+  return s.replace("-", "−");
+}
+
+// ---------- Zustand ----------
+let modus = "ziehen";          // "ziehen" | "regler"
+let zustand = "bereit";        // "bereit" | "laeuft" | "pause" | "fertig"
+let xs = [];                   // Orte an den Zeitpunkten i·DT
+let vs = new Float64Array(0), as = new Float64Array(0);
+let t = 0, tBasis = 0;         // Aufnahmezeit, performance.now()-Bezug
+let xWagen = 0;                // aktueller Ort des Wagens in m
+let vorher = { t: 0, x: 0 };   // letztes Bild (für Interpolation beim Ziehen)
+let reg = { x: 0, v: 0 };      // Zustand im Regler-Modus
+let zieht = null;              // { id, versatz }
+let cursorT = null;            // Ablese-Zeitpunkt in den Diagrammen
+let skalaX = null, skalaV = null, skalaA = null;
+let geaendert = true, raf = 0;
+
+// ---------- Voreinstellungen aus der Adresse ----------
+const par = new URLSearchParams(location.search.slice(1) || window.name || "");
+for (const k of ["x0", "v0", "a"]) if (par.has(k) && isFinite(+par.get(k))) $(k).value = par.get(k);
+if (FENSTER[par.get("glaettung")] && par.get("glaettung") !== "regler") $("glaettung").value = par.get("glaettung");
+if (BAHNEN.includes(+par.get("bahn"))) L = +par.get("bahn");
+
+// ---------- Numerik: quadratische Ausgleichskurve um Punkt i ----------
+function ableitung(i, m) {
+  const n = xs.length;
+  if (n < 3) return [xs[i] ?? xWagen, 0, 0];
+  let lo = i - m, hi = i + m;
+  // Am Anfang symmetrisch kleineres Fenster (sonst „sieht“ t = 0 schon das spätere Anfahren),
+  // am laufenden Ende das Fenster zurückschieben, damit die Live-Werte nicht hinterherhinken.
+  if (lo < 0) { const k = Math.max(2, i); lo = Math.max(0, i - k); hi = Math.min(n - 1, i + k); }
+  if (hi > n - 1) { lo = Math.max(0, lo - (hi - n + 1)); hi = n - 1; }
+  let s0 = 0, s1 = 0, s2 = 0, s3 = 0, s4 = 0, b0 = 0, b1 = 0, b2 = 0;
+  for (let j = lo; j <= hi; j++) {
+    const u = j - i, u2 = u * u, x = xs[j];
+    s0++; s1 += u; s2 += u2; s3 += u2 * u; s4 += u2 * u2; b0 += x; b1 += u * x; b2 += u2 * x;
+  }
+  // 3×3-Normalgleichungen mit der Cramerschen Regel lösen
+  const det = s0 * (s2 * s4 - s3 * s3) - s1 * (s1 * s4 - s3 * s2) + s2 * (s1 * s3 - s2 * s2);
+  if (Math.abs(det) < 1e-9) return [xs[i], 0, 0];
+  const c0 = (b0 * (s2 * s4 - s3 * s3) - s1 * (b1 * s4 - s3 * b2) + s2 * (b1 * s3 - s2 * b2)) / det;
+  const c1 = (s0 * (b1 * s4 - b2 * s3) - b0 * (s1 * s4 - s3 * s2) + s2 * (s1 * b2 - b1 * s2)) / det;
+  const c2 = (s0 * (s2 * b2 - s3 * b1) - s1 * (s1 * b2 - b1 * s2) + b0 * (s1 * s3 - s2 * s2)) / det;
+  return [c0, c1 / DT, 2 * c2 / (DT * DT)];
+}
+function schoeneZahl(r) {
+  const p = 10 ** Math.floor(Math.log10(r)), f = r / p;
+  return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * p;
+}
+// Automatische Hochachse: enthält alle Werte und die Null, mindestens die Spanne „spanne“.
+// Während der Aufnahme wächst sie nur (kein Springen), danach passt sie sich genau an.
+// „deckel“ begrenzt v und a, damit ein einzelner Ruck die Skala nicht unbrauchbar macht.
+function skala(werte, alt, spanne, deckel, nullUnten) {
+  let lo = 0, hi = 0;
+  for (const w of werte) { if (w < lo) lo = w; if (w > hi) hi = w; }
+  lo = Math.max(lo, -deckel); hi = Math.min(hi, deckel);
+  if (alt && zustand === "laeuft") { lo = Math.min(lo, alt.lo); hi = Math.max(hi, alt.hi); }
+  if (hi - lo < spanne) {
+    if (hi > -lo || (nullUnten && hi === -lo)) hi = lo + spanne;
+    else if (-lo > hi) lo = hi - spanne;
+    else { lo = -spanne / 2; hi = spanne / 2; }
+  }
+  const schritt = schoeneZahl((hi - lo) / 4);
+  return { lo: Math.floor(lo / schritt + 1e-9) * schritt, hi: Math.ceil(hi / schritt - 1e-9) * schritt, schritt };
+}
+function berechnen() {
+  const [mv, ma] = FENSTER[modus === "regler" ? "regler" : $("glaettung").value];
+  const n = xs.length;
+  vs = new Float64Array(n); as = new Float64Array(n);
+  for (let i = 0; i < n; i++) { vs[i] = ableitung(i, mv)[1]; as[i] = ableitung(i, ma)[2]; }
+  skalaX = skala(xs, skalaX, 1, Infinity, true);
+  skalaV = skala(vs, skalaV, 1, 20, false); skalaA = skala(as, skalaA, 1, 50, false);
+  geaendert = false;
+}
+
+// ---------- Aufnahme ----------
+function reglerSchritt() {
+  // kein Anschlag: der Wagen darf aus dem Bild fahren
+  const a = +$("a").value;
+  reg.x += reg.v * DT + 0.5 * a * DT * DT; reg.v += a * DT;
+  return reg.x;
+}
+function aufnehmen(jetzt) {
+  const tn = Math.min(T, (jetzt - tBasis) / 1000);
+  while (xs.length <= N && xs.length * DT <= tn + 1e-9) {
+    const ti = xs.length * DT;
+    if (xs.length === 0) { xs.push(modus === "regler" ? reg.x : xWagen); continue; }
+    if (modus === "regler") xs.push(reglerSchritt());
+    else {
+      const f = tn > vorher.t ? Math.min(1, Math.max(0, (ti - vorher.t) / (tn - vorher.t))) : 1;
+      xs.push(vorher.x + (xWagen - vorher.x) * f);
+    }
+  }
+  if (modus === "regler") xWagen = reg.x;
+  vorher = { t: tn, x: xWagen }; t = tn; geaendert = true;
+  if (xs.length > N) { zustand = "fertig"; zieht = null; $("bahn").classList.remove("zieht"); knoepfe(); }
+}
+
+// ---------- Zeichnen ----------
+function vorbereiten(c) {
+  const r = window.devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight;
+  if (c.width !== Math.round(w * r) || c.height !== Math.round(h * r)) { c.width = Math.round(w * r); c.height = Math.round(h * r); }
+  const g = c.getContext("2d"); g.setTransform(r, 0, 0, r, 0, 0); g.clearRect(0, 0, w, h);
+  return [g, w, h];
+}
+const RAND_L = 50, RAND_R = 12;
+const pxT = (tt, w) => RAND_L + (w - RAND_L - RAND_R) * tt / T;
+const tPx = (px, w) => (px - RAND_L) / (w - RAND_L - RAND_R) * T;
+function bahnGeom(w) { const l = 26, r = w - 26; return { l, r, px: (x) => l + (r - l) * x / L, x: (px) => (px - l) / (r - l) * L }; }
+function schrift(g, h) { g.font = `${Math.round(Math.max(12, Math.min(15, h / 8)))}px "Noto Sans","DejaVu Sans",sans-serif`; }
+
+function pfeil(g, x0, y, laenge, farbe, text) {
+  if (Math.abs(laenge) < 3) return;
+  const s = Math.sign(laenge), x1 = x0 + laenge;
+  g.strokeStyle = g.fillStyle = farbe; g.lineWidth = 3;
+  g.beginPath(); g.moveTo(x0, y); g.lineTo(x1 - s * 7, y); g.stroke();
+  g.beginPath(); g.moveTo(x1, y); g.lineTo(x1 - s * 10, y - 6); g.lineTo(x1 - s * 10, y + 6); g.closePath(); g.fill();
+  g.font = "italic bold 14px serif"; g.textAlign = s > 0 ? "left" : "right"; g.textBaseline = "middle";
+  g.fillText(text, x1 + s * 4, y); g.textAlign = "left"; g.textBaseline = "alphabetic";
+}
+function wagen(g, px, yBahn, blass) {
+  g.globalAlpha = blass ? 0.35 : 1;
+  g.fillStyle = "#a1c73a"; g.strokeStyle = "#32373c"; g.lineWidth = 2;
+  g.beginPath(); g.roundRect ? g.roundRect(px - 24, yBahn - 32, 48, 22, 5) : g.rect(px - 24, yBahn - 32, 48, 22); g.fill(); g.stroke();
+  g.fillStyle = "#32373c";
+  for (const d of [-14, 14]) { g.beginPath(); g.arc(px + d, yBahn - 6, 6, 0, 2 * Math.PI); g.fill(); }
+  g.strokeStyle = "#32373c"; g.lineWidth = 2; g.beginPath(); g.moveTo(px, yBahn - 32); g.lineTo(px, yBahn + 6); g.stroke();
+  g.globalAlpha = 1;
+}
+function zeichneBahn(werteJetzt) {
+  const [g, w, h] = vorbereiten($("c-bahn"));
+  const b = bahnGeom(w), yB = h - 30;
+  schrift(g, 100); g.fillStyle = "#6b6f73"; g.strokeStyle = "#32373c"; g.textAlign = "center";
+  g.lineWidth = 2; g.beginPath(); g.moveTo(b.l, yB); g.lineTo(b.r, yB); g.stroke(); g.lineWidth = 1;
+  // Skala: 10 Teilstriche über die sichtbare Bahn, beschriftet je nach Platz
+  const st = L / 10, jeder = (b.r - b.l) / 10 < 30 ? 2 : 1;
+  for (let k = 0; k <= 10; k++) {
+    const x = k * st;
+    g.fillRect(b.px(x) - 0.5, yB, 1, k % 5 === 0 ? 10 : 6);
+    if (k % jeder === 0) g.fillText(zahl(x, Number.isInteger(+x.toFixed(6)) ? 0 : 1) + (k === 10 ? " m" : ""), b.px(x), yB + 24);
+  }
+  g.textAlign = "left";
+  // Spur: Ort alle 0,5 s (wie ein Stroboskopbild), mit kurzer Erklärung links oben
+  g.fillStyle = "#1f4e79";
+  for (let i = 0; i < xs.length; i += 25) { g.beginPath(); g.arc(b.px(xs[i]), yB + 3, 3, 0, 2 * Math.PI); g.fill(); }
+  if (xs.length > 25) {
+    g.beginPath(); g.arc(14, 16, 3, 0, 2 * Math.PI); g.fill();
+    g.font = '12px "Noto Sans","DejaVu Sans",sans-serif'; g.fillStyle = "#6b6f73"; g.textBaseline = "middle";
+    g.fillText("Ort alle 0,5 s", 22, 16); g.textBaseline = "alphabetic"; schrift(g, 100);
+  }
+  // Beim Ablesen steht der Wagen blass am abgelesenen Ort.
+  const xz = cursorT !== null && werteJetzt ? werteJetzt.x : xWagen;
+  wagen(g, b.px(xz), yB, cursorT !== null);
+  // Wagen außerhalb des Bildes: Hinweis am Rand
+  const pz = b.px(xz);
+  if (pz < 0 || pz > w) {
+    const rechts = pz > w, xr = rechts ? w - 8 : 8, text = "Wagen bei x = " + zahl(xz, 1) + " m";
+    g.fillStyle = "#32373c";
+    g.beginPath(); g.moveTo(xr, yB - 20); g.lineTo(xr + (rechts ? -14 : 14), yB - 30); g.lineTo(xr + (rechts ? -14 : 14), yB - 10); g.closePath(); g.fill();
+    schrift(g, 100); g.textAlign = rechts ? "right" : "left"; g.textBaseline = "middle";
+    g.fillText(text, xr + (rechts ? -20 : 20), yB - 20); g.textAlign = "left"; g.textBaseline = "alphabetic";
+    return;
+  }
+  if (werteJetzt) {
+    const mpx = (b.r - b.l) / L, maxL = w * 0.3;
+    const lv = Math.max(-maxL, Math.min(maxL, werteJetzt.v * mpx));
+    const la = Math.max(-maxL, Math.min(maxL, werteJetzt.a * mpx * 2));
+    if (Math.abs(werteJetzt.v) > 0.02) pfeil(g, b.px(xz), yB - 42, lv, FARBE.v, "v");
+    if (Math.abs(werteJetzt.a) > 0.02) pfeil(g, b.px(xz), yB - 58, la, FARBE.a, "a");
+  }
+}
+function zeichneDia(id, werte, farbe, sk, beschriftung, titel, zeitachse, markeT) {
+  const [g, w, h] = vorbereiten($(id));
+  const unten = sk.lo, oben = sk.hi, schritt = sk.schritt;
+  const ro = 24, ru = zeitachse ? 24 : 8;  // oben Platz für die Beschriftung, damit sie keine Kurve verdeckt
+  const py = (y) => ro + (h - ro - ru) * (oben - y) / (oben - unten);
+  schrift(g, h);
+  const dez = Math.max(0, Math.ceil(-Math.log10(schritt) - 1e-9));
+  // Gitter
+  g.lineWidth = 1; g.strokeStyle = "#e1e3e5";
+  for (let tt = 0; tt <= T; tt++) { g.beginPath(); g.moveTo(pxT(tt, w) + 0.5, py(oben)); g.lineTo(pxT(tt, w) + 0.5, py(unten)); g.stroke(); }
+  g.fillStyle = "#6b6f73"; g.textAlign = "right"; g.textBaseline = "middle";
+  const hoeheSchritt = (h - ro - ru) * schritt / (oben - unten), jedes = hoeheSchritt < 16 ? 2 : 1;
+  const anzahl = Math.round((oben - unten) / schritt);
+  for (let k = 0; k <= anzahl; k++) {
+    const y = Math.abs(unten + k * schritt) < 1e-9 ? 0 : unten + k * schritt;
+    g.strokeStyle = Math.abs(y) < 1e-9 ? "#32373c" : "#e1e3e5";
+    g.beginPath(); g.moveTo(RAND_L, Math.round(py(y)) + 0.5); g.lineTo(w - RAND_R, Math.round(py(y)) + 0.5); g.stroke();
+    if (k % jedes === 0 || Math.abs(y) < 1e-9) g.fillText(zahl(y, dez), RAND_L - 5, py(y));
+  }
+  g.strokeStyle = "#32373c"; g.beginPath(); g.moveTo(RAND_L + 0.5, py(oben)); g.lineTo(RAND_L + 0.5, py(unten)); g.stroke();
+  g.textBaseline = "alphabetic";
+  if (zeitachse) {
+    g.textAlign = "center";
+    for (let tt = 0; tt <= T; tt += 2) g.fillText(String(tt), pxT(tt, w), h - 5);
+    g.textAlign = "right"; g.fillText("t in s", RAND_L - 10, h - 5);
+  }
+  // Achsenbeschriftung und Titel
+  g.textAlign = "left"; g.fillStyle = farbe; g.font = g.font.replace(/^/, "bold ");
+  g.fillText(beschriftung, RAND_L + 4, 15);
+  g.font = g.font.replace("bold ", ""); g.fillStyle = "#6b6f73"; g.textAlign = "right";
+  g.fillText(titel, w - RAND_R, 15); g.textAlign = "left";
+  // Kurve
+  if (werte.length > 1) {
+    g.save(); g.beginPath(); g.rect(RAND_L, ro - 2, w - RAND_L - RAND_R + 1, h - ro - ru + 4); g.clip();
+    g.strokeStyle = farbe; g.lineWidth = 2.5; g.lineJoin = g.lineCap = "round";
+    g.beginPath();
+    for (let i = 0; i < werte.length; i++) {
+      const X = pxT(i * DT, w), Y = py(werte[i]);
+      i ? g.lineTo(X, Y) : g.moveTo(X, Y);
+    }
+    g.stroke(); g.restore();
+  }
+  // Zeitmarke
+  if (markeT !== null && werte.length) {
+    const i = Math.min(werte.length - 1, Math.round(markeT / DT)), X = pxT(markeT, w);
+    g.strokeStyle = "#6b6f73"; g.setLineDash([4, 4]); g.beginPath(); g.moveTo(X, py(oben)); g.lineTo(X, py(unten)); g.stroke(); g.setLineDash([]);
+    g.fillStyle = farbe; g.beginPath(); g.arc(X, Math.max(ro, Math.min(h - ru, py(werte[i]))), 5, 0, 2 * Math.PI); g.fill();
+  }
+}
+function werteBei(tt) {
+  if (!xs.length) return null;
+  const i = Math.max(0, Math.min(xs.length - 1, Math.round(tt / DT)));
+  return { t: i * DT, x: xs[i], v: vs[i], a: as[i] };
+}
+function zeichnen() {
+  if (geaendert) berechnen();
+  const tMarke = cursorT !== null ? cursorT : (xs.length ? (xs.length - 1) * DT : null);
+  let jetzt = tMarke !== null ? werteBei(tMarke) : null;
+  // Vor dem Start im Regler-Modus: eingestellte Startwerte zeigen (mit Pfeilen am Wagen)
+  if (!jetzt && modus === "regler") jetzt = { t: 0, x: xWagen, v: +$("v0").value, a: +$("a").value };
+  zeichneBahn(jetzt);
+  zeichneDia("c-x", xs, FARBE.x, skalaX, "x in m", "Ort-Zeit", false, tMarke);
+  zeichneDia("c-v", vs, FARBE.v, skalaV, "v in m/s", "Geschwindigkeit-Zeit", false, tMarke);
+  zeichneDia("c-a", as, FARBE.a, skalaA, "a in m/s²", "Beschleunigung-Zeit", true, tMarke);
+  $("wt").textContent = "t = " + zahl(jetzt ? jetzt.t : 0) + " s";
+  $("wx").textContent = "x = " + zahl(jetzt ? jetzt.x : xWagen) + " m";
+  $("wv").textContent = "v = " + zahl(jetzt ? jetzt.v : 0) + " m/s";
+  $("wa").textContent = "a = " + zahl(jetzt ? jetzt.a : 0) + " m/s²";
+}
+function bild(jetzt) {
+  raf = 0;
+  if (zustand === "laeuft") aufnehmen(jetzt);
+  zeichnen();
+  if (zustand === "laeuft") anfordern();
+}
+function anfordern() { if (!raf) raf = requestAnimationFrame(bild); }
+
+// ---------- Knöpfe und Anzeige ----------
+function knoepfe() {
+  $("start").disabled = zustand === "laeuft";
+  $("start").textContent = zustand === "pause" ? "▶ Weiter" : zustand === "fertig" ? "▶ Neu" : "▶ Start";
+  $("pause").disabled = zustand !== "laeuft";
+  for (const k of ["x0", "v0"]) $(k).disabled = zustand !== "bereit";
+  const tipps = {
+    ziehen: {
+      bereit: "Drück ▶ Start und zieh dann den Wagen mit Finger oder Maus.",
+      laeuft: "Aufnahme läuft – zieh den Wagen hin und her!",
+    },
+    regler: {
+      bereit: "Stell x₀, v₀ und a ein, dann ▶ Start. Den Startort kannst du auch ziehen.",
+      laeuft: "Aufnahme läuft. Du kannst a auch während der Fahrt ändern. ↔ zeigt mehr Bahn.",
+    },
+  };
+  $("tipp").textContent = zustand === "pause" ? "Pause. Tipp in ein Diagramm zum Ablesen."
+    : zustand === "fertig" ? "Fertig (10 s). Tipp in ein Diagramm zum Ablesen oder ▶ Neu."
+    : tipps[modus][zustand];
+  anfordern();
+}
+function regleranzeige() {
+  $("ox0").textContent = zahl(+$("x0").value, Number.isInteger(+$("x0").step * 10) ? 1 : 2) + " m";
+  $("ov0").textContent = zahl(+$("v0").value, 1) + " m/s";
+  $("oa").textContent = zahl(+$("a").value, 2) + " m/s²";
+}
+function zuruecksetzen() {
+  zustand = "bereit"; xs = []; t = 0; cursorT = null; skalaX = skalaV = skalaA = null; geaendert = true; zieht = null;
+  $("bahn").classList.remove("zieht");
+  if (modus === "regler") { reg = { x: +$("x0").value, v: +$("v0").value }; xWagen = reg.x; }
+  knoepfe();
+}
+function setzeModus(m) {
+  modus = m;
+  $("m-ziehen").setAttribute("aria-pressed", m === "ziehen");
+  $("m-regler").setAttribute("aria-pressed", m === "regler");
+  $("regler").hidden = m !== "regler";
+  $("glaettung-feld").hidden = m !== "ziehen";
+  zuruecksetzen();
+  requestAnimationFrame(() => anfordern());  // Layout hat sich geändert
+}
+$("start").onclick = () => {
+  if (zustand === "fertig") zuruecksetzen();  // „Neu“: gleich die nächste Aufnahme
+  if (zustand === "bereit") {
+    xs = []; cursorT = null;
+    if (modus === "regler") reg = { x: +$("x0").value, v: +$("v0").value }, xWagen = reg.x;
+    t = 0;
+  }
+  if (zustand === "bereit" || zustand === "pause") {
+    cursorT = null;
+    tBasis = performance.now() - t * 1000; vorher = { t, x: xWagen };
+    zustand = "laeuft"; knoepfe();
+  }
+};
+$("pause").onclick = () => { if (zustand === "laeuft") { zustand = "pause"; zieht = null; $("bahn").classList.remove("zieht"); knoepfe(); } };
+$("reset").onclick = zuruecksetzen;
+// Moduswechsel löscht die Aufnahme: vorher nachfragen, falls schon etwas aufgenommen ist
+function wechsle(m) {
+  if (m === modus) return;
+  if (xs.length > 1) {
+    if (zustand === "laeuft") $("pause").click();  // Aufnahme anhalten, solange gefragt wird
+    if (!confirm("Beim Wechsel wird deine Aufnahme gelöscht. Trotzdem wechseln?")) return;
+  }
+  setzeModus(m);
+}
+$("m-ziehen").onclick = () => wechsle("ziehen");
+$("m-regler").onclick = () => wechsle("regler");
+$("glaettung").onchange = () => { geaendert = true; skalaV = skalaA = null; anfordern(); };
+for (const k of ["x0", "v0", "a"]) $(k).addEventListener("input", () => {
+  regleranzeige();
+  if (k === "x0" && zustand === "bereit") { xWagen = reg.x = +$("x0").value; }
+  anfordern();  // Anzeige und Pfeile folgen den Reglern
+});
+
+// ---------- Sichtbarer Bereich der Bahn ----------
+function setzeBahn(neu) {
+  L = neu;
+  $("massstab").textContent = "↔ 0–" + L + " m";
+  // Startort-Regler passt sich dem sichtbaren Bereich an (20 Schritte)
+  const x0 = $("x0");
+  x0.max = L; x0.step = L / 20;
+  if (+x0.value > L) x0.value = L;
+  if (modus === "regler" && zustand === "bereit") xWagen = reg.x = +x0.value;
+  regleranzeige(); anfordern();
+}
+$("massstab").addEventListener("pointerdown", (e) => e.stopPropagation());
+$("massstab").onclick = () => setzeBahn(BAHNEN[(BAHNEN.indexOf(L) + 1) % BAHNEN.length]);
+
+// ---------- Ziehen auf der Bahn ----------
+const bahn = $("bahn");
+function ortAusZeiger(e) {
+  const r = bahn.getBoundingClientRect();
+  return bahnGeom(r.width).x(e.clientX - r.left);
+}
+bahn.addEventListener("pointerdown", (e) => {
+  if (e.button !== 0 && e.pointerType === "mouse") return;
+  const darf = modus === "ziehen" ? (zustand === "bereit" || zustand === "laeuft") : zustand === "bereit";
+  if (!darf || zieht) return;
+  e.preventDefault();
+  const xp = ortAusZeiger(e);
+  // Greift man den Wagen, bleibt der Abstand erhalten; sonst springt er unter den Finger.
+  const versatz = Math.abs(xp - xWagen) < 0.06 * L ? xWagen - xp : 0;
+  zieht = { id: e.pointerId, versatz };
+  try { bahn.setPointerCapture(e.pointerId); } catch (_) { /* z. B. Zeiger schon weg */ }
+  bahn.classList.add("zieht");
+  bewegen(e);
+});
+function bewegen(e) {
+  if (!zieht || e.pointerId !== zieht.id) return;
+  xWagen = ortAusZeiger(e) + zieht.versatz;  // darf auch aus dem Bild
+  if (modus === "regler") { $("x0").value = xWagen; xWagen = reg.x = +$("x0").value; regleranzeige(); }
+  anfordern();
+}
+bahn.addEventListener("pointermove", bewegen);
+for (const ev of ["pointerup", "pointercancel", "lostpointercapture"]) bahn.addEventListener(ev, (e) => {
+  if (zieht && e.pointerId === zieht.id) { zieht = null; bahn.classList.remove("zieht"); }
+});
+
+// ---------- Ablesen in den Diagrammen ----------
+let liest = null;
+function ablesen(e) {
+  const c = e.currentTarget, r = c.getBoundingClientRect();
+  cursorT = Math.max(0, Math.min((xs.length - 1) * DT, tPx(e.clientX - r.left, r.width)));
+  anfordern();
+}
+for (const d of document.querySelectorAll(".dia")) {
+  d.addEventListener("pointerdown", (e) => {
+    if (zustand === "laeuft" || xs.length < 2) return;
+    liest = e.pointerId; ablesen(e);
+  });
+  d.addEventListener("pointermove", (e) => { if (liest === e.pointerId && zustand !== "laeuft") ablesen(e); });
+  for (const ev of ["pointerup", "pointercancel", "pointerleave"]) d.addEventListener(ev, () => { liest = null; });
+}
+
+// ---------- Tastatur (Desktop/Beamer) ----------
+addEventListener("keydown", (e) => {
+  if (e.target.closest && e.target.closest("input, select, button")) return;
+  if (e.key === " ") { e.preventDefault(); zustand === "laeuft" ? $("pause").click() : $("start").click(); }
+  else if (e.key === "r" || e.key === "R") zuruecksetzen();
+});
+
+new ResizeObserver(() => anfordern()).observe(document.querySelector(".app"));
+setzeBahn(L);
+setzeModus(par.get("modus") === "ziehen" ? "ziehen" : "regler");
+</script>
+</body>
+</html>
